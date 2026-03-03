@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { startServer } from "./server.js";
+import { startServer } from "./server";
 
 startServer().catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);

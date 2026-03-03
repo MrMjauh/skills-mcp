@@ -1,7 +1,7 @@
-import { ResolvedConfig, ResolvedRepoConfig } from "./config.js";
-import { cache } from "./cache.js";
-import { createOctokit, listDirectory, getFileContent } from "./github.js";
 import { RequestError } from "@octokit/request-error";
+import { cache } from "./cache";
+import type { ResolvedConfig, ResolvedRepoConfig } from "./config";
+import { createOctokit, getFileContent, listDirectory } from "./github";
 
 function log(level: "info" | "warn" | "error", message: string): void {
   process.stderr.write(`[skills-mcp] ${level.toUpperCase()}: ${message}\n`);
@@ -11,21 +11,31 @@ function sanitizeName(name: string): string | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
   // Reject path traversal attempts
-  if (trimmed.includes("..") || trimmed.includes("/") || trimmed.includes("\\")) {
+  if (
+    trimmed.includes("..") ||
+    trimmed.includes("/") ||
+    trimmed.includes("\\")
+  ) {
     return null;
   }
   return trimmed;
 }
 
 async function detectLayout(
-  repo: ResolvedRepoConfig
+  repo: ResolvedRepoConfig,
 ): Promise<"flat" | "nested"> {
   const layoutKey = `layout:${repo.owner}/${repo.repo}`;
   const cached = cache.getLayout(layoutKey);
   if (cached) return cached;
 
   const octokit = createOctokit(repo.token);
-  const items = await listDirectory(octokit, repo.owner, repo.repo, repo.branch, repo.skillsPath);
+  const items = await listDirectory(
+    octokit,
+    repo.owner,
+    repo.repo,
+    repo.branch,
+    repo.skillsPath,
+  );
 
   const hasDir = items.some((i) => i.type === "dir");
   const layout = hasDir ? "nested" : "flat";
@@ -41,7 +51,7 @@ export interface SkillRef {
 
 async function listSkillsForRepo(
   repo: ResolvedRepoConfig,
-  ttl: number
+  ttl: number,
 ): Promise<string[]> {
   const listKey = `list:${repo.owner}/${repo.repo}`;
   const cached = cache.get<string[]>(listKey, ttl);
@@ -51,13 +61,23 @@ async function listSkillsForRepo(
   }
 
   const octokit = createOctokit(repo.token);
-  const items = await listDirectory(octokit, repo.owner, repo.repo, repo.branch, repo.skillsPath);
+  const items = await listDirectory(
+    octokit,
+    repo.owner,
+    repo.repo,
+    repo.branch,
+    repo.skillsPath,
+  );
   const layout = await detectLayout(repo);
 
   let names: string[];
   if (layout === "flat") {
     names = items
-      .filter((i) => i.type === "file" && i.name.endsWith(".md"))
+      .filter(
+        (i) =>
+          i.type === "file" &&
+          (i.name.endsWith(".md") || i.name.endsWith(".ts")),
+      )
       .map((i) => i.name.slice(0, -3))
       .sort();
   } else {
@@ -71,6 +91,36 @@ async function listSkillsForRepo(
   return names;
 }
 
+export interface SkillMeta {
+  name: string;
+  description: string | null;
+}
+
+function extractDescription(content: string): string | null {
+  // Handle both flat layout (--- at start) and nested layout (--- after a heading line)
+  const fmMatch = content.match(/(?:^|\n)---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return null;
+  const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
+  return descMatch ? descMatch[1].trim() : null;
+}
+
+export async function listAllSkillsWithDescriptions(
+  config: ResolvedConfig,
+): Promise<SkillMeta[]> {
+  const names = await listAllSkills(config);
+  return Promise.all(
+    names.map(async (name) => {
+      const cached = cache.get<string>(`skill:${name}`, config.cacheTtlSeconds);
+      const content = cached
+        ? cached
+        : await fetchSkill(config, name).then((r) =>
+            "error" in r ? null : r.content,
+          );
+      return { name, description: content ? extractDescription(content) : null };
+    }),
+  );
+}
+
 export async function listAllSkills(config: ResolvedConfig): Promise<string[]> {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -80,14 +130,20 @@ export async function listAllSkills(config: ResolvedConfig): Promise<string[]> {
       const names = await listSkillsForRepo(repo, config.cacheTtlSeconds);
       for (const name of names) {
         if (seen.has(name)) {
-          log("warn", `Skill name collision: "${name}" already seen (${repo.owner}/${repo.repo} ignored)`);
+          log(
+            "warn",
+            `Skill name collision: "${name}" already seen (${repo.owner}/${repo.repo} ignored)`,
+          );
         } else {
           seen.add(name);
           result.push(name);
         }
       }
     } catch (err) {
-      log("error", `Failed to list skills from ${repo.owner}/${repo.repo}: ${formatError(err)}`);
+      log(
+        "error",
+        `Failed to list skills from ${repo.owner}/${repo.repo}: ${formatError(err)}`,
+      );
     }
   }
 
@@ -96,7 +152,7 @@ export async function listAllSkills(config: ResolvedConfig): Promise<string[]> {
 
 async function findSkillRepo(
   config: ResolvedConfig,
-  name: string
+  name: string,
 ): Promise<ResolvedRepoConfig | null> {
   for (const repo of config.repos) {
     try {
@@ -111,11 +167,13 @@ async function findSkillRepo(
 
 export async function fetchSkill(
   config: ResolvedConfig,
-  rawName: string
+  rawName: string,
 ): Promise<{ content: string } | { error: string }> {
   const name = sanitizeName(rawName);
   if (!name) {
-    return { error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.` };
+    return {
+      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`,
+    };
   }
 
   const cacheKey = `skill:${name}`;
@@ -127,7 +185,9 @@ export async function fetchSkill(
 
   const repo = await findSkillRepo(config, name);
   if (!repo) {
-    return { error: `Skill not found: "${name}". Run listSkills to see available skills.` };
+    return {
+      error: `Skill not found: "${name}". Run listSkills to see available skills.`,
+    };
   }
 
   const repoKey = `skill:${repo.owner}/${repo.repo}:${name}`;
@@ -140,30 +200,60 @@ export async function fetchSkill(
     let content: string;
 
     if (layout === "flat") {
-      content = await getFileContent(
-        octokit, repo.owner, repo.repo, repo.branch,
-        `${repo.skillsPath}/${name}.md`
-      );
+      try {
+        content = await getFileContent(
+          octokit,
+          repo.owner,
+          repo.repo,
+          repo.branch,
+          `${repo.skillsPath}/${name}.md`,
+        );
+      } catch (err) {
+        if (err instanceof RequestError && err.status === 404) {
+          content = await getFileContent(
+            octokit,
+            repo.owner,
+            repo.repo,
+            repo.branch,
+            `${repo.skillsPath}/${name}.ts`,
+          );
+        } else {
+          throw err;
+        }
+      }
     } else {
       const files = await listDirectory(
-        octokit, repo.owner, repo.repo, repo.branch,
-        `${repo.skillsPath}/${name}`
+        octokit,
+        repo.owner,
+        repo.repo,
+        repo.branch,
+        `${repo.skillsPath}/${name}`,
       );
       const mdFiles = files
-        .filter((f) => f.type === "file" && f.name.endsWith(".md"))
+        .filter(
+          (f) =>
+            f.type === "file" &&
+            (f.name.endsWith(".md") || f.name.endsWith(".ts")),
+        )
         .sort((a, b) => a.name.localeCompare(b.name));
 
       if (mdFiles.length === 0) {
-        return { error: `Skill "${name}" exists but has no markdown files.` };
+        return {
+          error: `Skill "${name}" exists but has no markdown or TypeScript files.`,
+        };
       }
 
       const parts = await Promise.all(
         mdFiles.map(async (f) => {
           const text = await getFileContent(
-            octokit, repo.owner, repo.repo, repo.branch, f.path
+            octokit,
+            repo.owner,
+            repo.repo,
+            repo.branch,
+            f.path,
           );
           return `## ${f.name}\n\n${text}`;
-        })
+        }),
       );
       content = parts.join("\n\n---\n\n");
     }
@@ -186,7 +276,9 @@ function formatError(err: unknown): string {
     }
     if (status === 429) {
       const reset = err.response?.headers?.["x-ratelimit-reset"];
-      const resetTime = reset ? new Date(Number(reset) * 1000).toISOString() : "unknown";
+      const resetTime = reset
+        ? new Date(Number(reset) * 1000).toISOString()
+        : "unknown";
       return `GitHub rate limit exceeded. Resets at ${resetTime}. Add a token to increase your limit.`;
     }
     return `GitHub API error (${status}): ${err.message}`;

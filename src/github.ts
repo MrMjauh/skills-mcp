@@ -17,7 +17,7 @@ export async function listDirectory(
   owner: string,
   repo: string,
   branch: string,
-  path: string
+  path: string,
 ): Promise<GitHubItem[]> {
   const { data } = await octokit.rest.repos.getContent({
     owner,
@@ -38,7 +38,7 @@ export async function getFileContent(
   owner: string,
   repo: string,
   branch: string,
-  path: string
+  path: string,
 ): Promise<string> {
   const { data } = await octokit.rest.repos.getContent({
     owner,
@@ -51,7 +51,12 @@ export async function getFileContent(
     throw new Error(`Expected a file at "${path}" but got a directory`);
   }
 
-  const file = data as { type: string; content?: string; size: number; sha: string };
+  const file = data as {
+    type: string;
+    content?: string;
+    size: number;
+    sha: string;
+  };
 
   if (file.type !== "file") {
     throw new Error(`Unexpected content type "${file.type}" at "${path}"`);
@@ -59,7 +64,7 @@ export async function getFileContent(
 
   if (file.size > 1_000_000) {
     throw new Error(
-      `File "${path}" is ${file.size} bytes (>1 MB). Large files are not supported via the Contents API.`
+      `File "${path}" is ${file.size} bytes (>1 MB). Large files are not supported via the Contents API.`,
     );
   }
 

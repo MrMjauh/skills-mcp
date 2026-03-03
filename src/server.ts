@@ -1,32 +1,44 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig } from "./config.js";
-import { listAllSkills, fetchSkill } from "./skillsLoader.js";
+import { loadConfig } from "./config";
+import { fetchSkill, listAllSkillsWithDescriptions } from "./skillsLoader";
 
 export async function startServer(): Promise<void> {
   const config = await loadConfig();
 
-  const server = new McpServer({
-    name: "skills-mcp",
-    version: "1.0.0",
-  });
+  const server = new McpServer(
+    {
+      name: "skills-mcp",
+      version: "1.0.0",
+    },
+    {
+      instructions: `This server provides curated expert skill prompts with specialized domain knowledge, architectural patterns, and best-practice guidance.
+
+Workflow:
+1. At the start of any technical task, call listSkills to discover available expertise.
+2. If a skill matches the user's domain or task, call getSkill to load its full guidance.
+3. Apply the skill's patterns and recommendations throughout your response.
+
+Skills are the authoritative source for their domain — always prefer loading a relevant skill over relying solely on general knowledge.`,
+    },
+  );
 
   server.registerTool(
     "listSkills",
     {
       title: "List Skills",
       description:
-        "Returns the names of all available skills from the configured GitHub repositories.",
+        "Lists all available skills with descriptions when cached. Call this at the start of a task to discover relevant domain expertise before responding.",
       inputSchema: z.object({}),
     },
     async () => {
-      const skills = await listAllSkills(config);
-      const text = skills.length > 0
-        ? skills.join("\n")
-        : "(no skills found — check your config and that the skillsPath directory exists)";
-      return { content: [{ type: "text" as const, text }] };
-    }
+      const skills = await listAllSkillsWithDescriptions(config);
+      const lines = skills.map(({ name, description }) =>
+        description ? `${name} — ${description}` : name,
+      );
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    },
   );
 
   server.registerTool(
@@ -34,9 +46,11 @@ export async function startServer(): Promise<void> {
     {
       title: "Get Skill",
       description:
-        "Returns the markdown content of a named skill. Use listSkills first to see available skill names.",
+        "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
       inputSchema: z.object({
-        name: z.string().describe("The exact skill name as returned by listSkills"),
+        name: z
+          .string()
+          .describe("The exact skill name as returned by listSkills"),
       }),
     },
     async ({ name }) => {
@@ -48,7 +62,7 @@ export async function startServer(): Promise<void> {
         };
       }
       return { content: [{ type: "text" as const, text: result.content }] };
-    }
+    },
   );
 
   const transport = new StdioServerTransport();

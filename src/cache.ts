@@ -3,7 +3,7 @@ interface CacheEntry<T> {
   fetchedAt: number;
 }
 
-class SkillsCache {
+export class SkillsCache {
   private store = new Map<string, CacheEntry<unknown>>();
 
   get<T>(key: string, ttlSeconds: number): T | null {
@@ -22,7 +22,9 @@ class SkillsCache {
 
   // Layout cache has no TTL — persists for the session
   getLayout(key: string): "flat" | "nested" | null {
-    const entry = this.store.get(key) as CacheEntry<"flat" | "nested"> | undefined;
+    const entry = this.store.get(key) as
+      | CacheEntry<"flat" | "nested">
+      | undefined;
     return entry?.data ?? null;
   }
 
