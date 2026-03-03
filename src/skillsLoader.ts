@@ -7,17 +7,10 @@ function log(level: "info" | "warn" | "error", message: string): void {
   process.stderr.write(`[skills-mcp] ${level.toUpperCase()}: ${message}\n`);
 }
 
-function sanitizeName(name: string): string | null {
-  const trimmed = name.trim();
+function sanitizePath(path: string): string | null {
+  const trimmed = path.trim();
   if (!trimmed) return null;
-  // Reject path traversal attempts
-  if (
-    trimmed.includes("..") ||
-    trimmed.includes("/") ||
-    trimmed.includes("\\")
-  ) {
-    return null;
-  }
+  if (trimmed.includes("..") || trimmed.includes("\\")) return null;
   return trimmed;
 }
 
@@ -111,11 +104,11 @@ export async function listSkillsForRepoWithDescriptions(
   const skills = await listSkillsForRepo(repo, ttl);
   return Promise.all(
     skills.map(async ({ name, path }) => {
-      const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+      const cacheKey = `skill:${repo.owner}/${repo.repo}:${path}`;
       const cached = cache.get<string>(cacheKey, ttl);
       const content = cached
         ? cached
-        : await fetchSkillFromRepo(repo, name).then((r) =>
+        : await fetchSkillFromRepo(repo, path).then((r) =>
             "error" in r ? null : r.content,
           );
       const { title, description } = content ? extractFrontmatter(content) : { title: null, description: null };
@@ -134,70 +127,31 @@ export function findRepoBySlug(
 
 async function fetchSkillFromRepo(
   repo: ResolvedRepoConfig,
-  name: string,
+  path: string,
 ): Promise<{ content: string } | { error: string }> {
-  const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+  const cacheKey = `skill:${repo.owner}/${repo.repo}:${path}`;
   const cached = cache.get<string>(cacheKey, 300);
   if (cached) return { content: cached };
 
   try {
-    const layout = await detectLayout(repo);
     const octokit = createOctokit(repo.token);
     let content: string;
 
-    if (layout === "flat") {
-      try {
-        content = await getFileContent(
-          octokit,
-          repo.owner,
-          repo.repo,
-          repo.branch,
-          `${repo.skillsPath}/${name}.md`,
-        );
-      } catch (err) {
-        if (err instanceof RequestError && err.status === 404) {
-          content = await getFileContent(
-            octokit,
-            repo.owner,
-            repo.repo,
-            repo.branch,
-            `${repo.skillsPath}/${name}.ts`,
-          );
-        } else {
-          throw err;
-        }
-      }
+    if (path.endsWith(".md") || path.endsWith(".ts")) {
+      content = await getFileContent(octokit, repo.owner, repo.repo, repo.branch, path);
     } else {
-      const files = await listDirectory(
-        octokit,
-        repo.owner,
-        repo.repo,
-        repo.branch,
-        `${repo.skillsPath}/${name}`,
-      );
+      const files = await listDirectory(octokit, repo.owner, repo.repo, repo.branch, path);
       const mdFiles = files
-        .filter(
-          (f) =>
-            f.type === "file" &&
-            (f.name.endsWith(".md") || f.name.endsWith(".ts")),
-        )
+        .filter((f) => f.type === "file" && (f.name.endsWith(".md") || f.name.endsWith(".ts")))
         .sort((a, b) => a.name.localeCompare(b.name));
 
       if (mdFiles.length === 0) {
-        return {
-          error: `Skill "${name}" exists but has no markdown or TypeScript files.`,
-        };
+        return { error: `Skill at "${path}" has no markdown or TypeScript files.` };
       }
 
       const parts = await Promise.all(
         mdFiles.map(async (f) => {
-          const text = await getFileContent(
-            octokit,
-            repo.owner,
-            repo.repo,
-            repo.branch,
-            f.path,
-          );
+          const text = await getFileContent(octokit, repo.owner, repo.repo, repo.branch, f.path);
           return `## ${f.name}\n\n${text}`;
         }),
       );
@@ -213,15 +167,13 @@ async function fetchSkillFromRepo(
 
 export async function fetchSkill(
   repo: ResolvedRepoConfig,
-  rawName: string,
+  rawPath: string,
 ): Promise<{ content: string } | { error: string }> {
-  const name = sanitizeName(rawName);
-  if (!name) {
-    return {
-      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`,
-    };
+  const path = sanitizePath(rawPath);
+  if (!path) {
+    return { error: `Invalid skill path: "${rawPath}".` };
   }
-  return fetchSkillFromRepo(repo, name);
+  return fetchSkillFromRepo(repo, path);
 }
 
 function formatError(err: unknown): string {

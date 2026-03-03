@@ -144,13 +144,12 @@ function log(level, message) {
   process.stderr.write(`[skills-mcp] ${level.toUpperCase()}: ${message}
 `);
 }
-function sanitizeName(name) {
-  const trimmed = name.trim();
+function sanitizePath(path) {
+  const trimmed = path.trim();
   if (!trimmed)
     return null;
-  if (trimmed.includes("..") || trimmed.includes("/") || trimmed.includes("\\")) {
+  if (trimmed.includes("..") || trimmed.includes("\\"))
     return null;
-  }
   return trimmed;
 }
 async function detectLayout(repo) {
@@ -215,9 +214,9 @@ async function listSkillsForRepoWithDescriptions(repo, ttl) {
   const skills = await listSkillsForRepo(repo, ttl);
   return Promise.all(
     skills.map(async ({ name, path }) => {
-      const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+      const cacheKey = `skill:${repo.owner}/${repo.repo}:${path}`;
       const cached = cache.get(cacheKey, ttl);
-      const content = cached ? cached : await fetchSkillFromRepo(repo, name).then(
+      const content = cached ? cached : await fetchSkillFromRepo(repo, path).then(
         (r) => "error" in r ? null : r.content
       );
       const { title, description } = content ? extractFrontmatter(content) : { title: null, description: null };
@@ -228,62 +227,25 @@ async function listSkillsForRepoWithDescriptions(repo, ttl) {
 function findRepoBySlug(config, slug) {
   return config.repos.find((r) => `${r.owner}/${r.repo}` === slug);
 }
-async function fetchSkillFromRepo(repo, name) {
-  const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+async function fetchSkillFromRepo(repo, path) {
+  const cacheKey = `skill:${repo.owner}/${repo.repo}:${path}`;
   const cached = cache.get(cacheKey, 300);
   if (cached)
     return { content: cached };
   try {
-    const layout = await detectLayout(repo);
     const octokit = createOctokit(repo.token);
     let content;
-    if (layout === "flat") {
-      try {
-        content = await getFileContent(
-          octokit,
-          repo.owner,
-          repo.repo,
-          repo.branch,
-          `${repo.skillsPath}/${name}.md`
-        );
-      } catch (err) {
-        if (err instanceof RequestError && err.status === 404) {
-          content = await getFileContent(
-            octokit,
-            repo.owner,
-            repo.repo,
-            repo.branch,
-            `${repo.skillsPath}/${name}.ts`
-          );
-        } else {
-          throw err;
-        }
-      }
+    if (path.endsWith(".md") || path.endsWith(".ts")) {
+      content = await getFileContent(octokit, repo.owner, repo.repo, repo.branch, path);
     } else {
-      const files = await listDirectory(
-        octokit,
-        repo.owner,
-        repo.repo,
-        repo.branch,
-        `${repo.skillsPath}/${name}`
-      );
-      const mdFiles = files.filter(
-        (f) => f.type === "file" && (f.name.endsWith(".md") || f.name.endsWith(".ts"))
-      ).sort((a, b) => a.name.localeCompare(b.name));
+      const files = await listDirectory(octokit, repo.owner, repo.repo, repo.branch, path);
+      const mdFiles = files.filter((f) => f.type === "file" && (f.name.endsWith(".md") || f.name.endsWith(".ts"))).sort((a, b) => a.name.localeCompare(b.name));
       if (mdFiles.length === 0) {
-        return {
-          error: `Skill "${name}" exists but has no markdown or TypeScript files.`
-        };
+        return { error: `Skill at "${path}" has no markdown or TypeScript files.` };
       }
       const parts = await Promise.all(
         mdFiles.map(async (f) => {
-          const text = await getFileContent(
-            octokit,
-            repo.owner,
-            repo.repo,
-            repo.branch,
-            f.path
-          );
+          const text = await getFileContent(octokit, repo.owner, repo.repo, repo.branch, f.path);
           return `## ${f.name}
 
 ${text}`;
@@ -297,14 +259,12 @@ ${text}`;
     return { error: formatError(err) };
   }
 }
-async function fetchSkill(repo, rawName) {
-  const name = sanitizeName(rawName);
-  if (!name) {
-    return {
-      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`
-    };
+async function fetchSkill(repo, rawPath) {
+  const path = sanitizePath(rawPath);
+  if (!path) {
+    return { error: `Invalid skill path: "${rawPath}".` };
   }
-  return fetchSkillFromRepo(repo, name);
+  return fetchSkillFromRepo(repo, path);
 }
 function formatError(err) {
   if (err instanceof RequestError) {
@@ -427,10 +387,10 @@ Workflow:
       description: "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
       inputSchema: z.object({
         repo: z.string().describe('Repository slug in the format "owner/repo"'),
-        name: z.string().describe("The exact skill name as returned by listSkills")
+        path: z.string().describe("The exact path as returned by listSkills, e.g. skills/commit.md")
       })
     },
-    async ({ repo: repoSlug, name }) => {
+    async ({ repo: repoSlug, path }) => {
       if (!config) {
         return {
           content: [{ type: "text", text: NO_CONFIG_ERROR }],
@@ -444,7 +404,7 @@ Workflow:
           isError: true
         };
       }
-      const result = await fetchSkill(repo, name);
+      const result = await fetchSkill(repo, path);
       if ("error" in result) {
         return {
           content: [{ type: "text", text: result.error }],

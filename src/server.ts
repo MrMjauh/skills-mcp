@@ -119,10 +119,10 @@ Workflow:
         "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
       inputSchema: z.object({
         repo: z.string().describe('Repository slug in the format "owner/repo"'),
-        name: z.string().describe("The exact skill name as returned by listSkills"),
+        path: z.string().describe("The exact path as returned by listSkills, e.g. skills/commit.md"),
       }),
     },
-    async ({ repo: repoSlug, name }) => {
+    async ({ repo: repoSlug, path }) => {
       if (!config) {
         return {
           content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
@@ -136,7 +136,7 @@ Workflow:
           isError: true,
         };
       }
-      const result = await fetchSkill(repo, name);
+      const result = await fetchSkill(repo, path);
       if ("error" in result) {
         return {
           content: [{ type: "text" as const, text: result.error }],
