@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -52,6 +52,8 @@ function validate(raw: unknown): SkillsMcpConfig {
   return obj as unknown as SkillsMcpConfig;
 }
 
+const defaultConfigPath = join(homedir(), ".config", "skills-mcp", "config.json");
+
 async function tryReadJson(path: string): Promise<SkillsMcpConfig | null> {
   try {
     const text = await readFile(path, "utf-8");
@@ -61,41 +63,8 @@ async function tryReadJson(path: string): Promise<SkillsMcpConfig | null> {
   }
 }
 
-export async function loadConfig(): Promise<ResolvedConfig> {
-  let raw: SkillsMcpConfig | null = null;
-
-  const envPath = process.env.SKILLS_MCP_CONFIG;
-  if (envPath) {
-    raw = await tryReadJson(envPath);
-    if (!raw) {
-      throw new Error(
-        `Config file not found or invalid at SKILLS_MCP_CONFIG path: ${envPath}`,
-      );
-    }
-  }
-
-  if (!raw) {
-    raw = await tryReadJson(
-      join(homedir(), ".config", "skills-mcp", "config.json"),
-    );
-  }
-
-  if (!raw) {
-    raw = await tryReadJson(join(process.cwd(), "config.json"));
-  }
-
-  if (!raw) {
-    throw new Error(
-      "No config file found. Create one at:\n" +
-        "  ~/.config/skills-mcp/config.json\n" +
-        "  ./config.json\n" +
-        "  or set SKILLS_MCP_CONFIG=/path/to/config.json\n\n" +
-        "See config.example.json for the expected format.",
-    );
-  }
-
+export function resolveConfig(raw: SkillsMcpConfig): ResolvedConfig {
   const globalToken = raw.token ?? process.env.GITHUB_TOKEN;
-
   return {
     cacheTtlSeconds: raw.cacheTtlSeconds ?? 300,
     repos: raw.repos.map((r) => ({
@@ -106,4 +75,15 @@ export async function loadConfig(): Promise<ResolvedConfig> {
       token: r.token ?? globalToken,
     })),
   };
+}
+
+export async function loadConfig(): Promise<ResolvedConfig | null> {
+  const raw = await tryReadJson(defaultConfigPath);
+  return raw ? resolveConfig(raw) : null;
+}
+
+export async function writeConfig(repo: RepoConfig): Promise<void> {
+  await mkdir(join(homedir(), ".config", "skills-mcp"), { recursive: true });
+  const config: SkillsMcpConfig = { repos: [repo] };
+  await writeFile(defaultConfigPath, JSON.stringify(config, null, 2), "utf-8");
 }

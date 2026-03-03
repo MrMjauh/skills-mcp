@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 // src/config.ts
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 function validate(raw) {
@@ -31,6 +31,7 @@ function validate(raw) {
   }
   return obj;
 }
+var defaultConfigPath = join(homedir(), ".config", "skills-mcp", "config.json");
 async function tryReadJson(path) {
   try {
     const text = await readFile(path, "utf-8");
@@ -39,30 +40,7 @@ async function tryReadJson(path) {
     return null;
   }
 }
-async function loadConfig() {
-  let raw = null;
-  const envPath = process.env.SKILLS_MCP_CONFIG;
-  if (envPath) {
-    raw = await tryReadJson(envPath);
-    if (!raw) {
-      throw new Error(
-        `Config file not found or invalid at SKILLS_MCP_CONFIG path: ${envPath}`
-      );
-    }
-  }
-  if (!raw) {
-    raw = await tryReadJson(
-      join(homedir(), ".config", "skills-mcp", "config.json")
-    );
-  }
-  if (!raw) {
-    raw = await tryReadJson(join(process.cwd(), "config.json"));
-  }
-  if (!raw) {
-    throw new Error(
-      "No config file found. Create one at:\n  ~/.config/skills-mcp/config.json\n  ./config.json\n  or set SKILLS_MCP_CONFIG=/path/to/config.json\n\nSee config.example.json for the expected format."
-    );
-  }
+function resolveConfig(raw) {
   const globalToken = raw.token ?? process.env.GITHUB_TOKEN;
   return {
     cacheTtlSeconds: raw.cacheTtlSeconds ?? 300,
@@ -74,6 +52,15 @@ async function loadConfig() {
       token: r.token ?? globalToken
     }))
   };
+}
+async function loadConfig() {
+  const raw = await tryReadJson(defaultConfigPath);
+  return raw ? resolveConfig(raw) : null;
+}
+async function writeConfig(repo) {
+  await mkdir(join(homedir(), ".config", "skills-mcp"), { recursive: true });
+  const config = { repos: [repo] };
+  await writeFile(defaultConfigPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
 // src/skillsLoader.ts
@@ -374,8 +361,9 @@ function formatError(err) {
 }
 
 // src/server.ts
+var NO_CONFIG_ERROR = "No skills repository configured. Call the configureSkills tool first to set up your GitHub skills repo.";
 async function startServer() {
-  const config = await loadConfig();
+  let config = await loadConfig();
   const server = new McpServer(
     {
       name: "skills-mcp",
@@ -391,6 +379,31 @@ Workflow:
     }
   );
   server.registerTool(
+    "configureSkills",
+    {
+      title: "Configure Skills Repository",
+      description: "Sets up the GitHub repository to load skills from. Call this when no skills repository is configured yet. Ask the user for their GitHub repository URL.",
+      inputSchema: z.object({
+        url: z.string().describe("GitHub repository URL, e.g. https://github.com/owner/repo")
+      })
+    },
+    async ({ url }) => {
+      const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!match) {
+        return {
+          content: [{ type: "text", text: `Invalid GitHub URL: ${url}. Expected format: https://github.com/owner/repo` }],
+          isError: true
+        };
+      }
+      const [, owner, repo] = match;
+      await writeConfig({ owner, repo });
+      config = resolveConfig({ repos: [{ owner, repo }] });
+      return {
+        content: [{ type: "text", text: `Skills repository configured: ${owner}/${repo}. You can now call listSkills.` }]
+      };
+    }
+  );
+  server.registerTool(
     "listSkills",
     {
       title: "List Skills",
@@ -398,6 +411,12 @@ Workflow:
       inputSchema: z.object({})
     },
     async () => {
+      if (!config) {
+        return {
+          content: [{ type: "text", text: NO_CONFIG_ERROR }],
+          isError: true
+        };
+      }
       const skills = await listAllSkillsWithDescriptions(config);
       const lines = skills.map(
         ({ name, description }) => description ? `${name} \u2014 ${description}` : name
@@ -415,6 +434,12 @@ Workflow:
       })
     },
     async ({ name }) => {
+      if (!config) {
+        return {
+          content: [{ type: "text", text: NO_CONFIG_ERROR }],
+          isError: true
+        };
+      }
       const result = await fetchSkill(config, name);
       if ("error" in result) {
         return {

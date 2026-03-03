@@ -1,11 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig } from "./config";
+import { loadConfig, resolveConfig, writeConfig, type ResolvedConfig } from "./config";
 import { fetchSkill, listAllSkillsWithDescriptions } from "./skillsLoader";
 
+const NO_CONFIG_ERROR =
+  "No skills repository configured. Call the configureSkills tool first to set up your GitHub skills repo.";
+
 export async function startServer(): Promise<void> {
-  const config = await loadConfig();
+  let config: ResolvedConfig | null = await loadConfig();
 
   const server = new McpServer(
     {
@@ -23,6 +26,35 @@ Workflow:
   );
 
   server.registerTool(
+    "configureSkills",
+    {
+      title: "Configure Skills Repository",
+      description:
+        "Sets up the GitHub repository to load skills from. Call this when no skills repository is configured yet. Ask the user for their GitHub repository URL.",
+      inputSchema: z.object({
+        url: z
+          .string()
+          .describe("GitHub repository URL, e.g. https://github.com/owner/repo"),
+      }),
+    },
+    async ({ url }) => {
+      const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!match) {
+        return {
+          content: [{ type: "text" as const, text: `Invalid GitHub URL: ${url}. Expected format: https://github.com/owner/repo` }],
+          isError: true,
+        };
+      }
+      const [, owner, repo] = match;
+      await writeConfig({ owner, repo });
+      config = resolveConfig({ repos: [{ owner, repo }] });
+      return {
+        content: [{ type: "text" as const, text: `Skills repository configured: ${owner}/${repo}. You can now call listSkills.` }],
+      };
+    },
+  );
+
+  server.registerTool(
     "listSkills",
     {
       title: "List Skills",
@@ -31,6 +63,12 @@ Workflow:
       inputSchema: z.object({}),
     },
     async () => {
+      if (!config) {
+        return {
+          content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
+          isError: true,
+        };
+      }
       const skills = await listAllSkillsWithDescriptions(config);
       const lines = skills.map(({ name, description }) =>
         description ? `${name} — ${description}` : name,
@@ -52,6 +90,12 @@ Workflow:
       }),
     },
     async ({ name }) => {
+      if (!config) {
+        return {
+          content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
+          isError: true,
+        };
+      }
       const result = await fetchSkill(config, name);
       if ("error" in result) {
         return {
