@@ -73,12 +73,27 @@ A GitHub token is required for private repos and recommended for rate-limit head
 
 ## Setup
 
+Add to your Claude Code MCP config:
+
+```json
+{
+  "mcpServers": {
+    "skills": {
+      "command": "npx",
+      "args": ["github:MrMjauh/skills-mcp"]
+    }
+  }
+}
+```
+
+Or clone and build locally:
+
 ```sh
+git clone https://github.com/MrMjauh/skills-mcp
+cd skills-mcp
 npm install
 npm run build
 ```
-
-Add to your Claude Code MCP config:
 
 ```json
 {

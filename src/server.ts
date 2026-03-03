@@ -18,9 +18,7 @@ export async function startServer(): Promise<void> {
 Workflow:
 1. At the start of any technical task, call listSkills to discover available expertise.
 2. If a skill matches the user's domain or task, call getSkill to load its full guidance.
-3. Apply the skill's patterns and recommendations throughout your response.
-
-Skills are the authoritative source for their domain — always prefer loading a relevant skill over relying solely on general knowledge.`,
+3. Apply the skill's patterns and recommendations throughout your response.`,
     },
   );
 
