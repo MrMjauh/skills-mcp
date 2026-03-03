@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
 // src/server.ts
-var import_mcp = require("@modelcontextprotocol/sdk/server/mcp.js");
-var import_stdio = require("@modelcontextprotocol/sdk/server/stdio.js");
-var import_zod = require("zod");
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 
 // src/config.ts
-var import_promises = require("fs/promises");
-var import_os = require("os");
-var import_path = require("path");
+import { readFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
 function validate(raw) {
   if (!raw || typeof raw !== "object") {
     throw new Error("Config must be a JSON object");
@@ -33,7 +33,7 @@ function validate(raw) {
 }
 async function tryReadJson(path) {
   try {
-    const text = await (0, import_promises.readFile)(path, "utf-8");
+    const text = await readFile(path, "utf-8");
     return validate(JSON.parse(text));
   } catch {
     return null;
@@ -52,11 +52,11 @@ async function loadConfig() {
   }
   if (!raw) {
     raw = await tryReadJson(
-      (0, import_path.join)((0, import_os.homedir)(), ".config", "skills-mcp", "config.json")
+      join(homedir(), ".config", "skills-mcp", "config.json")
     );
   }
   if (!raw) {
-    raw = await tryReadJson((0, import_path.join)(process.cwd(), "config.json"));
+    raw = await tryReadJson(join(process.cwd(), "config.json"));
   }
   if (!raw) {
     throw new Error(
@@ -77,7 +77,7 @@ async function loadConfig() {
 }
 
 // src/skillsLoader.ts
-var import_request_error = require("@octokit/request-error");
+import { RequestError } from "@octokit/request-error";
 
 // src/cache.ts
 var SkillsCache = class {
@@ -107,9 +107,9 @@ var SkillsCache = class {
 var cache = new SkillsCache();
 
 // src/github.ts
-var import_rest = require("@octokit/rest");
+import { Octokit } from "@octokit/rest";
 function createOctokit(token) {
-  return new import_rest.Octokit({ auth: token });
+  return new Octokit({ auth: token });
 }
 async function listDirectory(octokit, owner, repo, branch, path) {
   const { data } = await octokit.rest.repos.getContent({
@@ -302,7 +302,7 @@ async function fetchSkill(config, rawName) {
           `${repo.skillsPath}/${name}.md`
         );
       } catch (err) {
-        if (err instanceof import_request_error.RequestError && err.status === 404) {
+        if (err instanceof RequestError && err.status === 404) {
           content = await getFileContent(
             octokit,
             repo.owner,
@@ -353,7 +353,7 @@ ${text}`;
   }
 }
 function formatError(err) {
-  if (err instanceof import_request_error.RequestError) {
+  if (err instanceof RequestError) {
     const status = err.status;
     if (status === 401 || status === 403) {
       return `GitHub auth error (${status}): A valid token is required. Set GITHUB_TOKEN or add a "token" field to the repo config.`;
@@ -376,7 +376,7 @@ function formatError(err) {
 // src/server.ts
 async function startServer() {
   const config = await loadConfig();
-  const server = new import_mcp.McpServer(
+  const server = new McpServer(
     {
       name: "skills-mcp",
       version: "1.0.0"
@@ -395,7 +395,7 @@ Workflow:
     {
       title: "List Skills",
       description: "Lists all available skills with descriptions when cached. Call this at the start of a task to discover relevant domain expertise before responding.",
-      inputSchema: import_zod.z.object({})
+      inputSchema: z.object({})
     },
     async () => {
       const skills = await listAllSkillsWithDescriptions(config);
@@ -410,8 +410,8 @@ Workflow:
     {
       title: "Get Skill",
       description: "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
-      inputSchema: import_zod.z.object({
-        name: import_zod.z.string().describe("The exact skill name as returned by listSkills")
+      inputSchema: z.object({
+        name: z.string().describe("The exact skill name as returned by listSkills")
       })
     },
     async ({ name }) => {
@@ -425,7 +425,7 @@ Workflow:
       return { content: [{ type: "text", text: result.content }] };
     }
   );
-  const transport = new import_stdio.StdioServerTransport();
+  const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 

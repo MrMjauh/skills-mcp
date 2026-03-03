@@ -1,6 +1,7 @@
 {
   "name": "skills-mcp",
   "version": "1.0.0",
+  "type": "module",
   "description": "MCP server that exposes GitHub-hosted skills as tools",
   "bin": {
     "skills-mcp": "./dist/index.js"
