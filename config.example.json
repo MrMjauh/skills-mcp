@@ -1,0 +1,19 @@
+{
+  "repos": [
+    {
+      "owner": "your-org",
+      "repo": "your-skills-repo",
+      "branch": "main",
+      "skillsPath": "skills"
+    },
+    {
+      "owner": "your-org",
+      "repo": "private-skills-repo",
+      "branch": "main",
+      "skillsPath": "skills",
+      "token": "github_pat_replace_with_your_token"
+    }
+  ],
+  "token": "github_pat_global_fallback_token_optional",
+  "cacheTtlSeconds": 300
+}
