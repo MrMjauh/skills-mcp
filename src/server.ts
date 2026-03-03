@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { appendRepo, loadConfig, type ResolvedConfig } from "./config";
+import { appendRepo, loadConfig, removeAllRepos, removeRepo, type ResolvedConfig } from "./config";
 import {
   fetchSkill,
   findRepoBySlug,
@@ -58,6 +58,42 @@ Workflow:
   );
 
   server.registerTool(
+    "removeRepo",
+    {
+      title: "Remove Skills Repository",
+      description: 'Removes a GitHub repository from the skills configuration by slug (e.g. "owner/repo").',
+      inputSchema: z.object({
+        repo: z.string().describe('Repository slug in the format "owner/repo"'),
+      }),
+    },
+    async ({ repo: slug }) => {
+      const { config: updated, removed } = await removeRepo(slug);
+      if (!removed) {
+        return {
+          content: [{ type: "text" as const, text: `Repo "${slug}" not found in config.` }],
+          isError: true,
+        };
+      }
+      config = updated;
+      return { content: [{ type: "text" as const, text: `Removed ${slug}.` }] };
+    },
+  );
+
+  server.registerTool(
+    "removeAllRepos",
+    {
+      title: "Remove All Repositories",
+      description: "Removes all GitHub repositories from the skills configuration.",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      await removeAllRepos();
+      config = null;
+      return { content: [{ type: "text" as const, text: "All repos removed." }] };
+    },
+  );
+
+  server.registerTool(
     "listRepos",
     {
       title: "List Repos",
@@ -83,31 +119,27 @@ Workflow:
     {
       title: "List Skills",
       description:
-        "Lists all skills in a specific repository with their path and description. Present the results as a selectable list to the user so they can pick the most relevant skill.",
-      inputSchema: z.object({
-        repo: z.string().describe('Repository slug in the format "owner/repo"'),
-      }),
+        "Lists all skills across all configured repositories, grouped by repo. Each section header shows the repo slug to use with getSkill. Present the results as a selectable list to the user so they can pick the most relevant skill.",
+      inputSchema: z.object({}),
     },
-    async ({ repo: repoSlug }) => {
+    async () => {
       if (!config) {
         return {
           content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
           isError: true,
         };
       }
-      const repo = findRepoBySlug(config, repoSlug);
-      if (!repo) {
-        return {
-          content: [{ type: "text" as const, text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
-          isError: true,
-        };
-      }
-      const skills = await listSkillsForRepoWithDescriptions(repo, config.cacheTtlSeconds);
-      const lines = skills.map(({ name, path, description }) => {
-        const desc = description ? ` — ${description}` : "";
-        return `${name} (${path})${desc}`;
-      });
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      const sections = await Promise.all(
+        config.repos.map(async (repo) => {
+          const skills = await listSkillsForRepoWithDescriptions(repo, config!.cacheTtlSeconds);
+          const lines = skills.map(({ name, path, description }) => {
+            const desc = description ? ` — ${description}` : "";
+            return `${name} (${path})${desc}`;
+          });
+          return `## Repo: ${repo.owner}/${repo.repo}\n${lines.join("\n")}`;
+        }),
+      );
+      return { content: [{ type: "text" as const, text: sections.join("\n\n") }] };
     },
   );
 

@@ -90,3 +90,19 @@ export async function appendRepo(repo: RepoConfig): Promise<ResolvedConfig> {
   await writeFile(defaultConfigPath, JSON.stringify(config, null, 2), "utf-8");
   return resolveConfig(config);
 }
+
+export async function removeRepo(slug: string): Promise<{ config: ResolvedConfig | null; removed: boolean }> {
+  const existing = await tryReadJson(defaultConfigPath);
+  if (!existing) return { config: null, removed: false };
+  const [owner, repo] = slug.split("/");
+  const before = existing.repos.length;
+  const repos = existing.repos.filter((r) => !(r.owner === owner && r.repo === repo));
+  if (repos.length === before) return { config: resolveConfig(existing), removed: false };
+  await writeFile(defaultConfigPath, JSON.stringify({ ...existing, repos }, null, 2), "utf-8");
+  const config = repos.length > 0 ? resolveConfig({ ...existing, repos }) : null;
+  return { config, removed: true };
+}
+
+export async function removeAllRepos(): Promise<void> {
+  await writeFile(defaultConfigPath, JSON.stringify({ repos: [] }, null, 2), "utf-8");
+}

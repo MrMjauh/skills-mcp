@@ -65,6 +65,22 @@ async function appendRepo(repo) {
   await writeFile(defaultConfigPath, JSON.stringify(config, null, 2), "utf-8");
   return resolveConfig(config);
 }
+async function removeRepo(slug) {
+  const existing = await tryReadJson(defaultConfigPath);
+  if (!existing)
+    return { config: null, removed: false };
+  const [owner, repo] = slug.split("/");
+  const before = existing.repos.length;
+  const repos = existing.repos.filter((r) => !(r.owner === owner && r.repo === repo));
+  if (repos.length === before)
+    return { config: resolveConfig(existing), removed: false };
+  await writeFile(defaultConfigPath, JSON.stringify({ ...existing, repos }, null, 2), "utf-8");
+  const config = repos.length > 0 ? resolveConfig({ ...existing, repos }) : null;
+  return { config, removed: true };
+}
+async function removeAllRepos() {
+  await writeFile(defaultConfigPath, JSON.stringify({ repos: [] }, null, 2), "utf-8");
+}
 
 // src/skillsLoader.ts
 import { RequestError } from "@octokit/request-error";
@@ -330,6 +346,40 @@ Workflow:
     }
   );
   server.registerTool(
+    "removeRepo",
+    {
+      title: "Remove Skills Repository",
+      description: 'Removes a GitHub repository from the skills configuration by slug (e.g. "owner/repo").',
+      inputSchema: z.object({
+        repo: z.string().describe('Repository slug in the format "owner/repo"')
+      })
+    },
+    async ({ repo: slug }) => {
+      const { config: updated, removed } = await removeRepo(slug);
+      if (!removed) {
+        return {
+          content: [{ type: "text", text: `Repo "${slug}" not found in config.` }],
+          isError: true
+        };
+      }
+      config = updated;
+      return { content: [{ type: "text", text: `Removed ${slug}.` }] };
+    }
+  );
+  server.registerTool(
+    "removeAllRepos",
+    {
+      title: "Remove All Repositories",
+      description: "Removes all GitHub repositories from the skills configuration.",
+      inputSchema: z.object({})
+    },
+    async () => {
+      await removeAllRepos();
+      config = null;
+      return { content: [{ type: "text", text: "All repos removed." }] };
+    }
+  );
+  server.registerTool(
     "listRepos",
     {
       title: "List Repos",
@@ -353,31 +403,28 @@ Workflow:
     "listSkills",
     {
       title: "List Skills",
-      description: "Lists all skills in a specific repository with their path and description. Present the results as a selectable list to the user so they can pick the most relevant skill.",
-      inputSchema: z.object({
-        repo: z.string().describe('Repository slug in the format "owner/repo"')
-      })
+      description: "Lists all skills across all configured repositories, grouped by repo. Each section header shows the repo slug to use with getSkill. Present the results as a selectable list to the user so they can pick the most relevant skill.",
+      inputSchema: z.object({})
     },
-    async ({ repo: repoSlug }) => {
+    async () => {
       if (!config) {
         return {
           content: [{ type: "text", text: NO_CONFIG_ERROR }],
           isError: true
         };
       }
-      const repo = findRepoBySlug(config, repoSlug);
-      if (!repo) {
-        return {
-          content: [{ type: "text", text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
-          isError: true
-        };
-      }
-      const skills = await listSkillsForRepoWithDescriptions(repo, config.cacheTtlSeconds);
-      const lines = skills.map(({ name, path, description }) => {
-        const desc = description ? ` \u2014 ${description}` : "";
-        return `${name} (${path})${desc}`;
-      });
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      const sections = await Promise.all(
+        config.repos.map(async (repo) => {
+          const skills = await listSkillsForRepoWithDescriptions(repo, config.cacheTtlSeconds);
+          const lines = skills.map(({ name, path, description }) => {
+            const desc = description ? ` \u2014 ${description}` : "";
+            return `${name} (${path})${desc}`;
+          });
+          return `## Repo: ${repo.owner}/${repo.repo}
+${lines.join("\n")}`;
+        })
+      );
+      return { content: [{ type: "text", text: sections.join("\n\n") }] };
     }
   );
   server.registerTool(

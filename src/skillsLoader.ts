@@ -14,6 +14,9 @@ function sanitizePath(path: string): string | null {
   return trimmed;
 }
 
+// Skills repos can be organized as a flat list of .md files or as nested
+// directories (one folder per skill). We detect which layout is in use so
+// we know whether to enumerate files or subdirectories when listing skills.
 async function detectLayout(
   repo: ResolvedRepoConfig,
 ): Promise<"flat" | "nested"> {
