@@ -388,9 +388,7 @@ async function startServer() {
 Workflow:
 1. At the start of any technical task, call listSkills to discover available expertise.
 2. If a skill matches the user's domain or task, call getSkill to load its full guidance.
-3. Apply the skill's patterns and recommendations throughout your response.
-
-Skills are the authoritative source for their domain \u2014 always prefer loading a relevant skill over relying solely on general knowledge.`
+3. Apply the skill's patterns and recommendations throughout your response.`
     }
   );
   server.registerTool(
