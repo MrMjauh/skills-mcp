@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-#!/usr/bin/env node
 
 // src/server.ts
 var import_mcp = require("@modelcontextprotocol/sdk/server/mcp.js");
