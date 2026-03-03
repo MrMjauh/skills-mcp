@@ -68,12 +68,16 @@ export async function loadConfig(): Promise<ResolvedConfig> {
   if (envPath) {
     raw = await tryReadJson(envPath);
     if (!raw) {
-      throw new Error(`Config file not found or invalid at SKILLS_MCP_CONFIG path: ${envPath}`);
+      throw new Error(
+        `Config file not found or invalid at SKILLS_MCP_CONFIG path: ${envPath}`,
+      );
     }
   }
 
   if (!raw) {
-    raw = await tryReadJson(join(homedir(), ".config", "skills-mcp", "config.json"));
+    raw = await tryReadJson(
+      join(homedir(), ".config", "skills-mcp", "config.json"),
+    );
   }
 
   if (!raw) {
@@ -86,7 +90,7 @@ export async function loadConfig(): Promise<ResolvedConfig> {
         "  ~/.config/skills-mcp/config.json\n" +
         "  ./config.json\n" +
         "  or set SKILLS_MCP_CONFIG=/path/to/config.json\n\n" +
-        "See config.example.json for the expected format."
+        "See config.example.json for the expected format.",
     );
   }
 

@@ -2,25 +2,31 @@
   "name": "skills-mcp",
   "version": "1.0.0",
   "description": "MCP server that exposes GitHub-hosted skills as tools",
-  "type": "module",
-  "main": "dist/index.js",
   "bin": {
-    "skills-mcp": "dist/index.js"
+    "skills-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "inspect": "npm run build && mcp-inspector node ./dist/index.js",
+    "lint": "biome check --write src"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.11.0",
-    "@octokit/rest": "^21.0.0",
-    "zod": "^3.25.0"
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "@octokit/request-error": "6.0.0",
+    "@octokit/rest": "21.0.0",
+    "zod": "4.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.5.0"
+    "@biomejs/biome": "2.4.5",
+    "@modelcontextprotocol/inspector": "0.21.0",
+    "@types/node": "22.0.0",
+    "tsup": "8.0.0",
+    "vitest": "4.0.18"
   },
   "engines": {
     "node": ">=18.0.0"
