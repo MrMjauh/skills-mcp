@@ -82,8 +82,11 @@ export async function loadConfig(): Promise<ResolvedConfig | null> {
   return raw ? resolveConfig(raw) : null;
 }
 
-export async function writeConfig(repo: RepoConfig): Promise<void> {
+export async function appendRepo(repo: RepoConfig): Promise<ResolvedConfig> {
   await mkdir(join(homedir(), ".config", "skills-mcp"), { recursive: true });
-  const config: SkillsMcpConfig = { repos: [repo] };
+  const existing = await tryReadJson(defaultConfigPath);
+  const repos = existing ? [...existing.repos, repo] : [repo];
+  const config: SkillsMcpConfig = { repos };
   await writeFile(defaultConfigPath, JSON.stringify(config, null, 2), "utf-8");
+  return resolveConfig(config);
 }

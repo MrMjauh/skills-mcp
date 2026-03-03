@@ -1,11 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig, resolveConfig, writeConfig, type ResolvedConfig } from "./config";
+import { appendRepo, loadConfig, type ResolvedConfig } from "./config";
 import { fetchSkill, listAllSkillsWithDescriptions } from "./skillsLoader";
 
 const NO_CONFIG_ERROR =
-  "No skills repository configured. Call the configureSkills tool first to set up your GitHub skills repo.";
+  "No skills repository configured. Call the addRepo tool first and ask the user for their GitHub repository URL.";
 
 export async function startServer(): Promise<void> {
   let config: ResolvedConfig | null = await loadConfig();
@@ -20,17 +20,17 @@ export async function startServer(): Promise<void> {
 
 Workflow:
 1. At the start of any technical task, call listSkills to discover available expertise.
-2. If a skill matches the user's domain or task, call getSkill to load its full guidance.
-3. Apply the skill's patterns and recommendations throughout your response.`,
+2. Present the skill list as a selectable input to the user so they can pick the most relevant skill.
+3. Call getSkill to load the chosen skill's full guidance and apply it throughout your response.`,
     },
   );
 
   server.registerTool(
-    "configureSkills",
+    "addRepo",
     {
-      title: "Configure Skills Repository",
+      title: "Add Skills Repository",
       description:
-        "Sets up the GitHub repository to load skills from. Call this when no skills repository is configured yet. Ask the user for their GitHub repository URL.",
+        "Adds a GitHub repository as a skills source. Ask the user for their GitHub repository URL. Can be called multiple times to add multiple repos.",
       inputSchema: z.object({
         url: z
           .string()
@@ -46,11 +46,31 @@ Workflow:
         };
       }
       const [, owner, repo] = match;
-      await writeConfig({ owner, repo });
-      config = resolveConfig({ repos: [{ owner, repo }] });
+      config = await appendRepo({ owner, repo });
       return {
-        content: [{ type: "text" as const, text: `Skills repository configured: ${owner}/${repo}. You can now call listSkills.` }],
+        content: [{ type: "text" as const, text: `Added ${owner}/${repo}. You can now call listSkills.` }],
       };
+    },
+  );
+
+  server.registerTool(
+    "listRepos",
+    {
+      title: "List Repos",
+      description: "Lists all configured GitHub skills repositories.",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      if (!config) {
+        return {
+          content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
+          isError: true,
+        };
+      }
+      const lines = config.repos.map(
+        (r) => `${r.owner}/${r.repo} (branch: ${r.branch}, path: ${r.skillsPath})`,
+      );
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },
   );
 
@@ -59,7 +79,7 @@ Workflow:
     {
       title: "List Skills",
       description:
-        "Lists all available skills with descriptions when cached. Call this at the start of a task to discover relevant domain expertise before responding.",
+        "Lists all available skills with descriptions. Call this at the start of a task, then present the results as a selectable list to the user so they can pick the most relevant skill.",
       inputSchema: z.object({}),
     },
     async () => {
