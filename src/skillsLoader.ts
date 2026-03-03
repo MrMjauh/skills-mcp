@@ -1,6 +1,6 @@
 import { RequestError } from "@octokit/request-error";
 import { cache } from "./cache";
-import type { ResolvedConfig, ResolvedRepoConfig } from "./config";
+import type { ResolvedRepoConfig } from "./config";
 import { createOctokit, getFileContent, listDirectory } from "./github";
 
 function log(level: "info" | "warn" | "error", message: string): void {
@@ -126,49 +126,6 @@ export function findRepoBySlug(
   return config.repos.find((r) => `${r.owner}/${r.repo}` === slug);
 }
 
-async function listAllSkillNames(config: ResolvedConfig): Promise<string[]> {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const repo of config.repos) {
-    try {
-      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      for (const { name } of skills) {
-        if (seen.has(name)) {
-          log(
-            "warn",
-            `Skill name collision: "${name}" already seen (${repo.owner}/${repo.repo} ignored)`,
-          );
-        } else {
-          seen.add(name);
-          result.push(name);
-        }
-      }
-    } catch (err) {
-      log(
-        "error",
-        `Failed to list skills from ${repo.owner}/${repo.repo}: ${formatError(err)}`,
-      );
-    }
-  }
-
-  return result.sort();
-}
-
-async function findSkillRepo(
-  config: ResolvedConfig,
-  name: string,
-): Promise<ResolvedRepoConfig | null> {
-  for (const repo of config.repos) {
-    try {
-      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      if (skills.some((s) => s.name === name)) return repo;
-    } catch {
-      // skip unavailable repos
-    }
-  }
-  return null;
-}
 
 async function fetchSkillFromRepo(
   repo: ResolvedRepoConfig,
@@ -250,7 +207,7 @@ async function fetchSkillFromRepo(
 }
 
 export async function fetchSkill(
-  config: ResolvedConfig,
+  repo: ResolvedRepoConfig,
   rawName: string,
 ): Promise<{ content: string } | { error: string }> {
   const name = sanitizeName(rawName);
@@ -259,14 +216,6 @@ export async function fetchSkill(
       error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`,
     };
   }
-
-  const repo = await findSkillRepo(config, name);
-  if (!repo) {
-    return {
-      error: `Skill not found: "${name}". Run listSkills to see available skills.`,
-    };
-  }
-
   return fetchSkillFromRepo(repo, name);
 }
 

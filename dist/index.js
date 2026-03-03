@@ -222,17 +222,6 @@ async function listSkillsForRepoWithDescriptions(repo, ttl) {
 function findRepoBySlug(config, slug) {
   return config.repos.find((r) => `${r.owner}/${r.repo}` === slug);
 }
-async function findSkillRepo(config, name) {
-  for (const repo of config.repos) {
-    try {
-      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      if (skills.some((s) => s.name === name))
-        return repo;
-    } catch {
-    }
-  }
-  return null;
-}
 async function fetchSkillFromRepo(repo, name) {
   const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
   const cached = cache.get(cacheKey, 300);
@@ -302,17 +291,11 @@ ${text}`;
     return { error: formatError(err) };
   }
 }
-async function fetchSkill(config, rawName) {
+async function fetchSkill(repo, rawName) {
   const name = sanitizeName(rawName);
   if (!name) {
     return {
       error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`
-    };
-  }
-  const repo = await findSkillRepo(config, name);
-  if (!repo) {
-    return {
-      error: `Skill not found: "${name}". Run listSkills to see available skills.`
     };
   }
   return fetchSkillFromRepo(repo, name);
@@ -437,17 +420,25 @@ Workflow:
       title: "Get Skill",
       description: "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
       inputSchema: z.object({
+        repo: z.string().describe('Repository slug in the format "owner/repo"'),
         name: z.string().describe("The exact skill name as returned by listSkills")
       })
     },
-    async ({ name }) => {
+    async ({ repo: repoSlug, name }) => {
       if (!config) {
         return {
           content: [{ type: "text", text: NO_CONFIG_ERROR }],
           isError: true
         };
       }
-      const result = await fetchSkill(config, name);
+      const repo = findRepoBySlug(config, repoSlug);
+      if (!repo) {
+        return {
+          content: [{ type: "text", text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
+          isError: true
+        };
+      }
+      const result = await fetchSkill(repo, name);
       if ("error" in result) {
         return {
           content: [{ type: "text", text: result.error }],

@@ -118,19 +118,25 @@ Workflow:
       description:
         "Loads a skill's full prompt, patterns, and guidance. Call this when listSkills shows a relevant skill for the user's task, then apply the skill's recommendations in your response.",
       inputSchema: z.object({
-        name: z
-          .string()
-          .describe("The exact skill name as returned by listSkills"),
+        repo: z.string().describe('Repository slug in the format "owner/repo"'),
+        name: z.string().describe("The exact skill name as returned by listSkills"),
       }),
     },
-    async ({ name }) => {
+    async ({ repo: repoSlug, name }) => {
       if (!config) {
         return {
           content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
           isError: true,
         };
       }
-      const result = await fetchSkill(config, name);
+      const repo = findRepoBySlug(config, repoSlug);
+      if (!repo) {
+        return {
+          content: [{ type: "text" as const, text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
+          isError: true,
+        };
+      }
+      const result = await fetchSkill(repo, name);
       if ("error" in result) {
         return {
           content: [{ type: "text" as const, text: result.error }],
