@@ -52,12 +52,14 @@ Claude will call `addRepo` with the URL and save it to `~/.config/skills-mcp/con
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `addRepo` | Add a GitHub repo as a skills source (by URL). Ask the user for their GitHub URL. |
-| `listRepos` | List all configured repos. |
-| `listSkills` | List available skills with descriptions. Results are presented as a selectable list. |
-| `getSkill` | Load a skill's full prompt and guidance by name. |
+| Tool | Input | Description |
+|------|-------|-------------|
+| `addRepo` | `url` | Add a GitHub repo as a skills source (by URL). |
+| `removeRepo` | `repo` (slug `owner/repo`) | Remove a specific repo from the configuration. |
+| `removeAllRepos` | — | Remove all configured repos. |
+| `listRepos` | — | List all configured repos. |
+| `listSkills` | — | List all skills across all repos, grouped by repo. Each section header shows the slug to use with `getSkill`. |
+| `getSkill` | `repo` (slug), `path` | Load a skill's full prompt and guidance by path (as returned by `listSkills`). |
 
 ## Skill repository layouts
 
@@ -66,7 +68,7 @@ Claude will call `addRepo` with the URL and save it to `~/.config/skills-mcp/con
 | Flat   | `skills/name.md` | top-level contains only files |
 | Nested | `skills/name/` (dir with `.md`/`.ts` files) | top-level contains directories |
 
-When multiple repos are configured, skills from later repos are skipped on name collision (first repo wins).
+When multiple repos are configured, `listSkills` shows all of them grouped by repo.
 
 ## GitHub token
 
