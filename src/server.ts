@@ -2,7 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { appendRepo, loadConfig, type ResolvedConfig } from "./config";
-import { fetchSkill, listAllSkillsWithDescriptions } from "./skillsLoader";
+import {
+  fetchSkill,
+  findRepoBySlug,
+  listSkillsForRepoWithDescriptions,
+} from "./skillsLoader";
 
 const NO_CONFIG_ERROR =
   "No skills repository configured. Call the addRepo tool first and ask the user for their GitHub repository URL.";
@@ -19,7 +23,7 @@ export async function startServer(): Promise<void> {
       instructions: `This server provides curated expert skill prompts with specialized domain knowledge, architectural patterns, and best-practice guidance.
 
 Workflow:
-1. At the start of any technical task, call listSkills to discover available expertise.
+1. At the start of any technical task, call listRepos then listSkills for each repo to discover available expertise.
 2. Present the skill list as a selectable input to the user so they can pick the most relevant skill.
 3. Call getSkill to load the chosen skill's full guidance and apply it throughout your response.`,
     },
@@ -79,20 +83,30 @@ Workflow:
     {
       title: "List Skills",
       description:
-        "Lists all available skills with descriptions. Call this at the start of a task, then present the results as a selectable list to the user so they can pick the most relevant skill.",
-      inputSchema: z.object({}),
+        "Lists all skills in a specific repository with their path and description. Present the results as a selectable list to the user so they can pick the most relevant skill.",
+      inputSchema: z.object({
+        repo: z.string().describe('Repository slug in the format "owner/repo"'),
+      }),
     },
-    async () => {
+    async ({ repo: repoSlug }) => {
       if (!config) {
         return {
           content: [{ type: "text" as const, text: NO_CONFIG_ERROR }],
           isError: true,
         };
       }
-      const skills = await listAllSkillsWithDescriptions(config);
-      const lines = skills.map(({ name, description }) =>
-        description ? `${name} — ${description}` : name,
-      );
+      const repo = findRepoBySlug(config, repoSlug);
+      if (!repo) {
+        return {
+          content: [{ type: "text" as const, text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
+          isError: true,
+        };
+      }
+      const skills = await listSkillsForRepoWithDescriptions(repo, config.cacheTtlSeconds);
+      const lines = skills.map(({ name, path, description }) => {
+        const desc = description ? ` — ${description}` : "";
+        return `${name} (${path})${desc}`;
+      });
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },
   );

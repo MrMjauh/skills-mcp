@@ -44,17 +44,12 @@ async function detectLayout(
   return layout;
 }
 
-export interface SkillRef {
-  name: string;
-  repo: ResolvedRepoConfig;
-}
-
 async function listSkillsForRepo(
   repo: ResolvedRepoConfig,
   ttl: number,
-): Promise<string[]> {
+): Promise<{ name: string; path: string }[]> {
   const listKey = `list:${repo.owner}/${repo.repo}`;
-  const cached = cache.get<string[]>(listKey, ttl);
+  const cached = cache.get<{ name: string; path: string }[]>(listKey, ttl);
   if (cached) {
     log("info", `Cache hit for listSkills ${repo.owner}/${repo.repo}`);
     return cached;
@@ -70,29 +65,30 @@ async function listSkillsForRepo(
   );
   const layout = await detectLayout(repo);
 
-  let names: string[];
+  let skills: { name: string; path: string }[];
   if (layout === "flat") {
-    names = items
+    skills = items
       .filter(
         (i) =>
           i.type === "file" &&
           (i.name.endsWith(".md") || i.name.endsWith(".ts")),
       )
-      .map((i) => i.name.slice(0, -3))
-      .sort();
+      .map((i) => ({ name: i.name.slice(0, -3), path: i.path }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   } else {
-    names = items
+    skills = items
       .filter((i) => i.type === "dir")
-      .map((i) => i.name)
-      .sort();
+      .map((i) => ({ name: i.name, path: i.path }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  cache.set(listKey, names);
-  return names;
+  cache.set(listKey, skills);
+  return skills;
 }
 
 export interface SkillMeta {
   name: string;
+  path: string;
   description: string | null;
 }
 
@@ -104,31 +100,40 @@ function extractDescription(content: string): string | null {
   return descMatch ? descMatch[1].trim() : null;
 }
 
-export async function listAllSkillsWithDescriptions(
-  config: ResolvedConfig,
+export async function listSkillsForRepoWithDescriptions(
+  repo: ResolvedRepoConfig,
+  ttl: number,
 ): Promise<SkillMeta[]> {
-  const names = await listAllSkills(config);
+  const skills = await listSkillsForRepo(repo, ttl);
   return Promise.all(
-    names.map(async (name) => {
-      const cached = cache.get<string>(`skill:${name}`, config.cacheTtlSeconds);
+    skills.map(async ({ name, path }) => {
+      const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+      const cached = cache.get<string>(cacheKey, ttl);
       const content = cached
         ? cached
-        : await fetchSkill(config, name).then((r) =>
+        : await fetchSkillFromRepo(repo, name).then((r) =>
             "error" in r ? null : r.content,
           );
-      return { name, description: content ? extractDescription(content) : null };
+      return { name, path, description: content ? extractDescription(content) : null };
     }),
   );
 }
 
-export async function listAllSkills(config: ResolvedConfig): Promise<string[]> {
+export function findRepoBySlug(
+  config: ResolvedConfig,
+  slug: string,
+): ResolvedRepoConfig | undefined {
+  return config.repos.find((r) => `${r.owner}/${r.repo}` === slug);
+}
+
+async function listAllSkillNames(config: ResolvedConfig): Promise<string[]> {
   const seen = new Set<string>();
   const result: string[] = [];
 
   for (const repo of config.repos) {
     try {
-      const names = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      for (const name of names) {
+      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
+      for (const { name } of skills) {
         if (seen.has(name)) {
           log(
             "warn",
@@ -156,8 +161,8 @@ async function findSkillRepo(
 ): Promise<ResolvedRepoConfig | null> {
   for (const repo of config.repos) {
     try {
-      const names = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      if (names.includes(name)) return repo;
+      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
+      if (skills.some((s) => s.name === name)) return repo;
     } catch {
       // skip unavailable repos
     }
@@ -165,34 +170,13 @@ async function findSkillRepo(
   return null;
 }
 
-export async function fetchSkill(
-  config: ResolvedConfig,
-  rawName: string,
+async function fetchSkillFromRepo(
+  repo: ResolvedRepoConfig,
+  name: string,
 ): Promise<{ content: string } | { error: string }> {
-  const name = sanitizeName(rawName);
-  if (!name) {
-    return {
-      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`,
-    };
-  }
-
-  const cacheKey = `skill:${name}`;
-  const cached = cache.get<string>(cacheKey, config.cacheTtlSeconds);
-  if (cached) {
-    log("info", `Cache hit for skill "${name}"`);
-    return { content: cached };
-  }
-
-  const repo = await findSkillRepo(config, name);
-  if (!repo) {
-    return {
-      error: `Skill not found: "${name}". Run listSkills to see available skills.`,
-    };
-  }
-
-  const repoKey = `skill:${repo.owner}/${repo.repo}:${name}`;
-  const repoCache = cache.get<string>(repoKey, config.cacheTtlSeconds);
-  if (repoCache) return { content: repoCache };
+  const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+  const cached = cache.get<string>(cacheKey, 300);
+  if (cached) return { content: cached };
 
   try {
     const layout = await detectLayout(repo);
@@ -258,11 +242,32 @@ export async function fetchSkill(
       content = parts.join("\n\n---\n\n");
     }
 
-    cache.set(repoKey, content);
+    cache.set(cacheKey, content);
     return { content };
   } catch (err) {
     return { error: formatError(err) };
   }
+}
+
+export async function fetchSkill(
+  config: ResolvedConfig,
+  rawName: string,
+): Promise<{ content: string } | { error: string }> {
+  const name = sanitizeName(rawName);
+  if (!name) {
+    return {
+      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`,
+    };
+  }
+
+  const repo = await findSkillRepo(config, name);
+  if (!repo) {
+    return {
+      error: `Skill not found: "${name}". Run listSkills to see available skills.`,
+    };
+  }
+
+  return fetchSkillFromRepo(repo, name);
 }
 
 function formatError(err: unknown): string {

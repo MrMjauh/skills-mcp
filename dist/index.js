@@ -188,16 +188,16 @@ async function listSkillsForRepo(repo, ttl) {
     repo.skillsPath
   );
   const layout = await detectLayout(repo);
-  let names;
+  let skills;
   if (layout === "flat") {
-    names = items.filter(
+    skills = items.filter(
       (i) => i.type === "file" && (i.name.endsWith(".md") || i.name.endsWith(".ts"))
-    ).map((i) => i.name.slice(0, -3)).sort();
+    ).map((i) => ({ name: i.name.slice(0, -3), path: i.path })).sort((a, b) => a.name.localeCompare(b.name));
   } else {
-    names = items.filter((i) => i.type === "dir").map((i) => i.name).sort();
+    skills = items.filter((i) => i.type === "dir").map((i) => ({ name: i.name, path: i.path })).sort((a, b) => a.name.localeCompare(b.name));
   }
-  cache.set(listKey, names);
-  return names;
+  cache.set(listKey, skills);
+  return skills;
 }
 function extractDescription(content) {
   const fmMatch = content.match(/(?:^|\n)---\n([\s\S]*?)\n---/);
@@ -206,78 +206,38 @@ function extractDescription(content) {
   const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
   return descMatch ? descMatch[1].trim() : null;
 }
-async function listAllSkillsWithDescriptions(config) {
-  const names = await listAllSkills(config);
+async function listSkillsForRepoWithDescriptions(repo, ttl) {
+  const skills = await listSkillsForRepo(repo, ttl);
   return Promise.all(
-    names.map(async (name) => {
-      const cached = cache.get(`skill:${name}`, config.cacheTtlSeconds);
-      const content = cached ? cached : await fetchSkill(config, name).then(
+    skills.map(async ({ name, path }) => {
+      const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+      const cached = cache.get(cacheKey, ttl);
+      const content = cached ? cached : await fetchSkillFromRepo(repo, name).then(
         (r) => "error" in r ? null : r.content
       );
-      return { name, description: content ? extractDescription(content) : null };
+      return { name, path, description: content ? extractDescription(content) : null };
     })
   );
 }
-async function listAllSkills(config) {
-  const seen = /* @__PURE__ */ new Set();
-  const result = [];
-  for (const repo of config.repos) {
-    try {
-      const names = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      for (const name of names) {
-        if (seen.has(name)) {
-          log(
-            "warn",
-            `Skill name collision: "${name}" already seen (${repo.owner}/${repo.repo} ignored)`
-          );
-        } else {
-          seen.add(name);
-          result.push(name);
-        }
-      }
-    } catch (err) {
-      log(
-        "error",
-        `Failed to list skills from ${repo.owner}/${repo.repo}: ${formatError(err)}`
-      );
-    }
-  }
-  return result.sort();
+function findRepoBySlug(config, slug) {
+  return config.repos.find((r) => `${r.owner}/${r.repo}` === slug);
 }
 async function findSkillRepo(config, name) {
   for (const repo of config.repos) {
     try {
-      const names = await listSkillsForRepo(repo, config.cacheTtlSeconds);
-      if (names.includes(name))
+      const skills = await listSkillsForRepo(repo, config.cacheTtlSeconds);
+      if (skills.some((s) => s.name === name))
         return repo;
     } catch {
     }
   }
   return null;
 }
-async function fetchSkill(config, rawName) {
-  const name = sanitizeName(rawName);
-  if (!name) {
-    return {
-      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`
-    };
-  }
-  const cacheKey = `skill:${name}`;
-  const cached = cache.get(cacheKey, config.cacheTtlSeconds);
-  if (cached) {
-    log("info", `Cache hit for skill "${name}"`);
+async function fetchSkillFromRepo(repo, name) {
+  const cacheKey = `skill:${repo.owner}/${repo.repo}:${name}`;
+  const cached = cache.get(cacheKey, 300);
+  if (cached)
     return { content: cached };
-  }
-  const repo = await findSkillRepo(config, name);
-  if (!repo) {
-    return {
-      error: `Skill not found: "${name}". Run listSkills to see available skills.`
-    };
-  }
-  const repoKey = `skill:${repo.owner}/${repo.repo}:${name}`;
-  const repoCache = cache.get(repoKey, config.cacheTtlSeconds);
-  if (repoCache)
-    return { content: repoCache };
   try {
     const layout = await detectLayout(repo);
     const octokit = createOctokit(repo.token);
@@ -336,11 +296,26 @@ ${text}`;
       );
       content = parts.join("\n\n---\n\n");
     }
-    cache.set(repoKey, content);
+    cache.set(cacheKey, content);
     return { content };
   } catch (err) {
     return { error: formatError(err) };
   }
+}
+async function fetchSkill(config, rawName) {
+  const name = sanitizeName(rawName);
+  if (!name) {
+    return {
+      error: `Invalid skill name: "${rawName}". Names must not be empty or contain path characters.`
+    };
+  }
+  const repo = await findSkillRepo(config, name);
+  if (!repo) {
+    return {
+      error: `Skill not found: "${name}". Run listSkills to see available skills.`
+    };
+  }
+  return fetchSkillFromRepo(repo, name);
 }
 function formatError(err) {
   if (err instanceof RequestError) {
@@ -376,7 +351,7 @@ async function startServer() {
       instructions: `This server provides curated expert skill prompts with specialized domain knowledge, architectural patterns, and best-practice guidance.
 
 Workflow:
-1. At the start of any technical task, call listSkills to discover available expertise.
+1. At the start of any technical task, call listRepos then listSkills for each repo to discover available expertise.
 2. Present the skill list as a selectable input to the user so they can pick the most relevant skill.
 3. Call getSkill to load the chosen skill's full guidance and apply it throughout your response.`
     }
@@ -429,20 +404,30 @@ Workflow:
     "listSkills",
     {
       title: "List Skills",
-      description: "Lists all available skills with descriptions. Call this at the start of a task, then present the results as a selectable list to the user so they can pick the most relevant skill.",
-      inputSchema: z.object({})
+      description: "Lists all skills in a specific repository with their path and description. Present the results as a selectable list to the user so they can pick the most relevant skill.",
+      inputSchema: z.object({
+        repo: z.string().describe('Repository slug in the format "owner/repo"')
+      })
     },
-    async () => {
+    async ({ repo: repoSlug }) => {
       if (!config) {
         return {
           content: [{ type: "text", text: NO_CONFIG_ERROR }],
           isError: true
         };
       }
-      const skills = await listAllSkillsWithDescriptions(config);
-      const lines = skills.map(
-        ({ name, description }) => description ? `${name} \u2014 ${description}` : name
-      );
+      const repo = findRepoBySlug(config, repoSlug);
+      if (!repo) {
+        return {
+          content: [{ type: "text", text: `Repo "${repoSlug}" not found. Call listRepos to see configured repositories.` }],
+          isError: true
+        };
+      }
+      const skills = await listSkillsForRepoWithDescriptions(repo, config.cacheTtlSeconds);
+      const lines = skills.map(({ name, path, description }) => {
+        const desc = description ? ` \u2014 ${description}` : "";
+        return `${name} (${path})${desc}`;
+      });
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
   );
