@@ -92,12 +92,16 @@ export interface SkillMeta {
   description: string | null;
 }
 
-function extractDescription(content: string): string | null {
-  // Handle both flat layout (--- at start) and nested layout (--- after a heading line)
+function extractFrontmatter(content: string): { title: string | null; description: string | null } {
   const fmMatch = content.match(/(?:^|\n)---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return null;
-  const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
-  return descMatch ? descMatch[1].trim() : null;
+  if (!fmMatch) return { title: null, description: null };
+  const fm = fmMatch[1];
+  const titleMatch = fm.match(/^title:\s*(.+)$/m);
+  const descMatch = fm.match(/^description:\s*(.+)$/m);
+  return {
+    title: titleMatch ? titleMatch[1].trim() : null,
+    description: descMatch ? descMatch[1].trim() : null,
+  };
 }
 
 export async function listSkillsForRepoWithDescriptions(
@@ -114,7 +118,8 @@ export async function listSkillsForRepoWithDescriptions(
         : await fetchSkillFromRepo(repo, name).then((r) =>
             "error" in r ? null : r.content,
           );
-      return { name, path, description: content ? extractDescription(content) : null };
+      const { title, description } = content ? extractFrontmatter(content) : { title: null, description: null };
+      return { name: title ?? name, path, description };
     }),
   );
 }

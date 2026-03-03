@@ -199,12 +199,17 @@ async function listSkillsForRepo(repo, ttl) {
   cache.set(listKey, skills);
   return skills;
 }
-function extractDescription(content) {
+function extractFrontmatter(content) {
   const fmMatch = content.match(/(?:^|\n)---\n([\s\S]*?)\n---/);
   if (!fmMatch)
-    return null;
-  const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
-  return descMatch ? descMatch[1].trim() : null;
+    return { title: null, description: null };
+  const fm = fmMatch[1];
+  const titleMatch = fm.match(/^title:\s*(.+)$/m);
+  const descMatch = fm.match(/^description:\s*(.+)$/m);
+  return {
+    title: titleMatch ? titleMatch[1].trim() : null,
+    description: descMatch ? descMatch[1].trim() : null
+  };
 }
 async function listSkillsForRepoWithDescriptions(repo, ttl) {
   const skills = await listSkillsForRepo(repo, ttl);
@@ -215,7 +220,8 @@ async function listSkillsForRepoWithDescriptions(repo, ttl) {
       const content = cached ? cached : await fetchSkillFromRepo(repo, name).then(
         (r) => "error" in r ? null : r.content
       );
-      return { name, path, description: content ? extractDescription(content) : null };
+      const { title, description } = content ? extractFrontmatter(content) : { title: null, description: null };
+      return { name: title ?? name, path, description };
     })
   );
 }
